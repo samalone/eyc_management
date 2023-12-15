@@ -54,6 +54,7 @@ function EYCManagement() {
         <details>
             <summary>Export invoices for Quickbooks</summary>
             <p>Convert all of the draft invoices in Airtable to a CSV file that you can upload to QuickBooks, and then mark those invoices as &quot;sent&quot; in Airtable.</p>
+            <ExportInvoices/>
         </details>
 
         <details>
@@ -63,11 +64,88 @@ function EYCManagement() {
     </div>;
 }
 
+function ExportInvoices() {
+    const base = useBase();
+    const itemsTable = base.getTableByName('Invoice items');
+
+    return (
+        <div>
+            <p>
+                <TextButton onClick={() => {
+                    exportInvoices(base, itemsTable);
+                }}>Export invoices</TextButton>
+            </p>
+        </div>
+    );
+}
+
+async function exportInvoices(base, itemsTable) {
+
+    
+    const draftItemsView = itemsTable.getView('Draft items');
+    const draftItemsQuery = await draftItemsView.selectRecordsAsync({ fields: ['Invoice', 'Member Name', 'Unit price', 'Product Name', 'Description', 'Quantity', 'Invoice Date', 'Due Date', 'Service Date', 'Amount'] });
+    await draftItemsQuery.loadDataAsync();
+
+
+    var csv = "Invoice #,Member Name,Unit price,Product Name,Description,Quantity,Invoice Date,Due Date,Service Date,Amount\r\n";
+    for (const record of draftItemsQuery.records) {
+        csv += record.getCellValueAsString('Invoice') + ",";
+        csv += record.getCellValueAsString('Member Name') + ",";
+        csv += record.getCellValue('Unit price') + ",";
+        csv += record.getCellValueAsString('Product Name') + ",";
+        csv += record.getCellValueAsString('Description') + ",";
+        csv += record.getCellValue('Quantity') + ",";
+        csv += record.getCellValueAsString('Invoice Date') + ",";
+        csv += record.getCellValueAsString('Due Date') + ",";
+        csv += record.getCellValueAsString('Service Date') + ",";
+        csv += record.getCellValue('Amount');
+        csv += "\r\n";
+    }
+    draftItemsQuery.unloadData();
+
+    downloadCSV("invoices.csv", csv);
+
+    // Mark all of the invoices as sent.
+    const invoicesTable = base.getTableByName('Invoices');
+    const draftInvoicesView = invoicesTable.getView('Draft invoices');
+    const draftInvoicesQuery = await draftInvoicesView.selectRecordsAsync({ fields: ['Invoice', 'Membership of draft invoice'] });
+    await draftInvoicesQuery.loadDataAsync();
+    var invoiceUpdates = [];
+    for (const record of draftInvoicesQuery.records) {
+        invoiceUpdates.push({
+            id: record.id,
+            fields: {
+                'Membership of draft invoice': [],
+            }
+        });
+    }
+    await bulkUpdate(invoicesTable, invoiceUpdates);
+}
+
+async function bulkUpdate(table, records) {
+    // Split updates into chunks of 50 records. Airtable has a limit of 50 records
+    // per API call.
+    const chunks = chunk(records, 50);
+    for (const chunk of chunks) {
+        await table.updateRecordsAsync(chunk);
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
+}
+
+async function bulkCreate(table, records) {
+    // Split updates into chunks of 50 records. Airtable has a limit of 50 records
+    // per API call.
+    const chunks = chunk(records, 50);
+    for (const chunk of chunks) {
+        await table.createRecordsAsync(chunk);
+        await new Promise(resolve => setTimeout(resolve, 200));
+    }
+}
+
 function GenerateInvoices({ members, invoices: invoiceTable }) {
     const base = useBase();
     const invoiceItemsTable = base.getTableByName('Invoice items');
     const invoiceField = invoiceTable.getFieldByName('Invoice');
-    console.log("Invoice field: " + invoiceField);
 
     // Find the highest invoice number in all existing invoices (not just the ones
     // for the passed-in members).
@@ -151,8 +229,13 @@ function hasLineItemWithProductName(itemRecords, productName) {
 
 async function createAnnualInvoices(base, members, invoiceTable, firstInvoiceNumber, invoiceDate, dueDate,
     invoiceItemsTable) {
+    
+    // If the firstInvoiceNumber is negative infinity, then the user didn't enter a number.
+    if (!isFinite(firstInvoiceNumber)) {
+        alert("Please enter a number for the first invoice number.");
+        return;
+    }
 
-    console.log("Creating invoices");
     // Calculate the service date, which is the first day of the same year as the dueDate.
     const serviceDate = dueDate.substring(0, 4) + "-01-01";
 
@@ -184,13 +267,9 @@ async function createAnnualInvoices(base, members, invoiceTable, firstInvoiceNum
             }
         };
     });
-    // Split invoices into chunks of 50 records. Airtable has a limit of 50 records
-    // per API call.
-    const chunks = chunk(newInvoices, 50);
-    for (const chunk of chunks) {
-        await invoiceTable.createRecordsAsync(chunk);
-        await new Promise(resolve => setTimeout(resolve, 200));
-    }
+
+    // console.log(JSON.stringify(newInvoices));
+    await bulkCreate(invoiceTable, newInvoices);
 
     // Load all of the draft invoices so we can examine their existing invoice items.
     const draftInvoicesView = invoiceTable.getView('Draft invoices');
@@ -219,7 +298,7 @@ async function createAnnualInvoices(base, members, invoiceTable, firstInvoiceNum
         const invoiceRecord = allDraftInvoices.getRecordByIdIfExists(invoice.id);
         const existingItems = invoiceRecord.selectLinkedRecordsFromCell('Invoice items', { fields: ['Product Name'] });
         await existingItems.loadDataAsync();
-        console.log("Invoice items: " + existingItems.records.length);
+        // console.log("Invoice items: " + existingItems.records.length);
 
         if (dues && dues.length > 0 && !hasLineItemWithProductName(existingItems, memberType.name)) {
             // Before adding the dues to the invoice, check to see if the draft invoice
@@ -254,11 +333,12 @@ async function createAnnualInvoices(base, members, invoiceTable, firstInvoiceNum
 
     // Split invoice items into chunks of 50 records. Airtable has a limit of 50 records
     // per API call.
-    const itemChunks = chunk(newInvoiceItems, 50);
-    for (const chunk of itemChunks) {
-        await invoiceItemsTable.createRecordsAsync(chunk);
-        await new Promise(resolve => setTimeout(resolve, 200));
-    }
+    await bulkCreate(invoiceItemsTable, newInvoiceItems);
+    // const itemChunks = chunk(newInvoiceItems, 50);
+    // for (const chunk of itemChunks) {
+    //     await invoiceItemsTable.createRecordsAsync(chunk);
+    //     await new Promise(resolve => setTimeout(resolve, 200));
+    // }
 
     allDraftInvoices.unloadData();
 
@@ -269,11 +349,11 @@ async function createAnnualInvoices(base, members, invoiceTable, firstInvoiceNum
 initializeBlock(() => <EYCManagement />);
 
 function downloadCSV(filename, csvContent) {
-    var encodedUri = encodeURI(csvContent);
+    var encodedUri = encodeURI("data:text/csv;charset=utf-8," + csvContent);
     var link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", filename);
-    document.body.appendChild(link); // Required for FF
+    document.body.appendChild(link); // Required for Firefox
 
     link.click();
 }
