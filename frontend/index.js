@@ -3,8 +3,12 @@ import {
     loadCSSFromString,
     useBase,
     useRecords,
+    Box,
+    Button,
+    FormField,
     TextButton,
     Input,
+    ConfirmationDialog,
 } from '@airtable/blocks/ui';
 import {
     aggregators,
@@ -47,7 +51,7 @@ function EYCManagement() {
 
         <details>
             <summary>Create annual membership invoices</summary>
-            <p>Create open invoices for every member. Each invoice includes membership dues, building assessment, and marina fees.</p>
+            <p>Create draft invoices for every member. Each invoice includes membership dues, building assessment, and marina fees.</p>
             <p>Note that these invoice items will be <i>added</i> to any existing invoices, so delete the current invoices first if you want to start from scratch.</p>
             <GenerateInvoices members={members} invoices={invoices} />
         </details>
@@ -77,11 +81,10 @@ function ExportInvoices() {
 
     return (
         <div>
-            <p>
-                <TextButton onClick={() => {
+            <Button icon="file"
+                onClick={() => {
                     exportInvoices(base, itemsTable);
-                }}>Export invoices</TextButton>
-            </p>
+                }}>Export invoices</Button>
         </div>
     );
 }
@@ -164,15 +167,28 @@ async function bulkDelete(table, records) {
 
 function DeleteAllInvoices() {
     const base = useBase();
+    const [isDialogOpen, setIsDialogOpen] = useState(false);
 
     return (
-        <div>
-            <p>
-                <TextButton onClick={() => {
-                    deleteAllInvoices(base);
-                }}>Delete all invoices</TextButton>
-            </p>
-        </div>
+        <React.Fragment>
+            <Button icon="trash" variant='danger'
+                onClick={() => {
+                    setIsDialogOpen(true);
+                }}>Delete all invoices</Button>
+
+            {isDialogOpen && (
+                <ConfirmationDialog
+                    isConfirmActionDangerous={true}
+                    title="Delete all invoices"
+                    body="Are you sure you want to delete all draft invoices? This cannot be undone."
+                    confirmButtonText="Delete all invoices"
+                    onConfirm={() => {
+                        setIsDialogOpen(false);
+                        deleteAllInvoices(base);
+                    }}
+                    onCancel={() => setIsDialogOpen(false)} />
+            )}
+        </React.Fragment>
     );
 }
 
@@ -211,10 +227,8 @@ function GenerateInvoices({ members, invoices: invoiceTable }) {
     // Return a React component that displays a numeric text input field
     // for the first invoice number, and a button to generate invoices.
     return (
-        <div>
-            <p>
-                <label>First invoice number:</label>
-                {' '}
+        <Box padding={2} border="1px solid #AAA" width="fit-content">
+            <FormField label="First invoice number">
                 <Input
                     value={firstInvoiceNumber}
                     onChange={e => setFirstInvoiceNumber(e.target.value)}
@@ -223,10 +237,8 @@ function GenerateInvoices({ members, invoices: invoiceTable }) {
                     type="number"
                     min={nextInvoiceNumber}
                 />
-            </p>
-            <p>
-                <label>Invoice date:</label>
-                {' '}
+            </FormField>
+            <FormField label="Invoice date">
                 <Input
                     value={invoiceDate}
                     onChange={e => setInvoiceDate(e.target.value)}
@@ -234,10 +246,8 @@ function GenerateInvoices({ members, invoices: invoiceTable }) {
                     width="8em"
                     type="date"
                 />
-            </p>
-            <p>
-                <label>Due date:</label>
-                {' '}
+            </FormField>
+            <FormField label="Due date">
                 <Input
                     value={dueDate}
                     onChange={e => setDueDate(e.target.value)}
@@ -245,14 +255,15 @@ function GenerateInvoices({ members, invoices: invoiceTable }) {
                     width="8em"
                     type="date"
                 />
-            </p>
+            </FormField>
             <p>
-                <TextButton onClick={() => {
-                    createAnnualInvoices(base, members, invoiceTable, Number(firstInvoiceNumber),
-                        invoiceDate, dueDate, invoiceItemsTable);
-                }}>Create invoices</TextButton>
+                <Button icon="plus"
+                    onClick={() => {
+                        createAnnualInvoices(base, members, invoiceTable, Number(firstInvoiceNumber),
+                            invoiceDate, dueDate, invoiceItemsTable);
+                    }}>Create invoices</Button>
             </p>
-        </div>
+        </Box>
     );
 }
 
