@@ -48,13 +48,20 @@ function EYCManagement() {
         <details>
             <summary>Create annual membership invoices</summary>
             <p>Create open invoices for every member. Each invoice includes membership dues, building assessment, and marina fees.</p>
+            <p>Note that these invoice items will be <i>added</i> to any existing invoices, so delete the current invoices first if you want to start from scratch.</p>
             <GenerateInvoices members={members} invoices={invoices} />
         </details>
 
         <details>
             <summary>Export invoices for Quickbooks</summary>
             <p>Convert all of the draft invoices in Airtable to a CSV file that you can upload to QuickBooks, and then mark those invoices as &quot;sent&quot; in Airtable.</p>
-            <ExportInvoices/>
+            <ExportInvoices />
+        </details>
+
+        <details>
+            <summary>Delete all invoices</summary>
+            <p>Delete all invoices in the database. The draft invoices in Airtable are only a staging area for transfer to QuickBooks, so once they have been exported they can be deleted.</p>
+            <DeleteAllInvoices />
         </details>
 
         <details>
@@ -81,7 +88,7 @@ function ExportInvoices() {
 
 async function exportInvoices(base, itemsTable) {
 
-    
+
     const draftItemsView = itemsTable.getView('Draft items');
     const draftItemsQuery = await draftItemsView.selectRecordsAsync({ fields: ['Invoice', 'Member Name', 'Unit price', 'Product Name', 'Description', 'Quantity', 'Invoice Date', 'Due Date', 'Service Date', 'Amount'] });
     await draftItemsQuery.loadDataAsync();
@@ -122,24 +129,64 @@ async function exportInvoices(base, itemsTable) {
     await bulkUpdate(invoicesTable, invoiceUpdates);
 }
 
+const BATCH_SIZE = 50;
+
 async function bulkUpdate(table, records) {
-    // Split updates into chunks of 50 records. Airtable has a limit of 50 records
-    // per API call.
-    const chunks = chunk(records, 50);
-    for (const chunk of chunks) {
-        await table.updateRecordsAsync(chunk);
-        await new Promise(resolve => setTimeout(resolve, 200));
+    let i = 0;
+    while (i < records.length) {
+        const recordBatch = records.slice(i, i + BATCH_SIZE);
+        // awaiting the delete means that next batch won't be deleted until the current
+        // batch has been fully deleted, keeping you under the rate limit
+        await table.updateRecordsAsync(recordBatch);
+        i += BATCH_SIZE;
     }
 }
 
 async function bulkCreate(table, records) {
-    // Split updates into chunks of 50 records. Airtable has a limit of 50 records
-    // per API call.
-    const chunks = chunk(records, 50);
-    for (const chunk of chunks) {
-        await table.createRecordsAsync(chunk);
-        await new Promise(resolve => setTimeout(resolve, 200));
+    let i = 0;
+    while (i < records.length) {
+        const recordBatch = records.slice(i, i + BATCH_SIZE);
+        await table.createRecordsAsync(recordBatch);
+        i += BATCH_SIZE;
     }
+}
+
+async function bulkDelete(table, records) {
+    let i = 0;
+    while (i < records.length) {
+        const recordBatch = records.slice(i, i + BATCH_SIZE);
+        // awaiting the delete means that next batch won't be deleted until the current
+        // batch has been fully deleted, keeping you under the rate limit
+        await table.deleteRecordsAsync(recordBatch);
+        i += BATCH_SIZE;
+    }
+}
+
+function DeleteAllInvoices() {
+    const base = useBase();
+
+    return (
+        <div>
+            <p>
+                <TextButton onClick={() => {
+                    deleteAllInvoices(base);
+                }}>Delete all invoices</TextButton>
+            </p>
+        </div>
+    );
+}
+
+async function deleteAllRecordsInTable(table) {
+    const records = await table.selectRecordsAsync();
+    await bulkDelete(table, records.records);
+    records.unloadData();
+}
+
+async function deleteAllInvoices(base) {
+    const invoiceTable = base.getTableByName('Invoices');
+    const invoiceItemsTable = base.getTableByName('Invoice items');
+    await deleteAllRecordsInTable(invoiceItemsTable);
+    await deleteAllRecordsInTable(invoiceTable);
 }
 
 function GenerateInvoices({ members, invoices: invoiceTable }) {
@@ -209,17 +256,6 @@ function GenerateInvoices({ members, invoices: invoiceTable }) {
     );
 }
 
-function chunk(array, chunkSize = 50) {
-    return array.reduce((resultArray, item, index) => {
-        const chunkIndex = Math.floor(index / chunkSize)
-        if (!resultArray[chunkIndex]) {
-            resultArray[chunkIndex] = [] // start a new chunk
-        }
-        resultArray[chunkIndex].push(item)
-        return resultArray
-    }, [])
-}
-
 function hasLineItemWithProductName(itemRecords, productName) {
     return itemRecords.records.some(function (item) {
         const name = item.getCellValueAsString('Product Name');
@@ -229,7 +265,7 @@ function hasLineItemWithProductName(itemRecords, productName) {
 
 async function createAnnualInvoices(base, members, invoiceTable, firstInvoiceNumber, invoiceDate, dueDate,
     invoiceItemsTable) {
-    
+
     // If the firstInvoiceNumber is negative infinity, then the user didn't enter a number.
     if (!isFinite(firstInvoiceNumber)) {
         alert("Please enter a number for the first invoice number.");
